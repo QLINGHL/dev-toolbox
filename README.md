@@ -15,6 +15,7 @@ python -m toolbox b64 "hello"                   # aGVsbG8=
 python -m toolbox b64 "aGVsbG8=" --decode       # hello
 python -m toolbox hash "hello"                  # sha256 hex digest
 python -m toolbox hash "hello" --algo md5
+python -m toolbox extract_json 'Here: {"a": 1}'  # {"a": 1} (pretty-printed)
 ```
 
 Or import the functions directly:
@@ -33,6 +34,7 @@ texttools.slugify("My First Post")   # 'my-first-post'
 | `camel` | snake_case / kebab-case → camelCase or PascalCase |
 | `b64` | Base64 encode / decode UTF-8 text |
 | `hash` | md5 / sha1 / sha256 hex digest of a text |
+| `extract_json` | First valid JSON object/array from LLM output (handles ```json fences and surrounding prose) |
 
 ## Roadmap
 
