@@ -7,6 +7,7 @@ Commands:
     b64      "hello"               -> aGVsbG8=     (--decode to reverse)
     hash     "hello"               -> sha256 hex digest (--algo md5|sha1|sha256)
     extract_json 'Here: {"a": 1}' -> {"a": 1} (pretty-printed)
+    tokens   "hello world"         -> 4 (offline estimate; --detail for breakdown)
 """
 
 import argparse
@@ -46,6 +47,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("text")
 
+    p = sub.add_parser(
+        "tokens",
+        help="offline token-count estimate for text (CJK 1/char, English ~4 chars/token)",
+    )
+    p.add_argument("text")
+    p.add_argument("--detail", action="store_true", help="print the full breakdown")
+
     return parser
 
 
@@ -65,6 +73,12 @@ def run(argv: list[str] | None = None) -> str:
         return json.dumps(
             llmtools.extract_json(args.text), ensure_ascii=False, indent=2
         )
+    if args.command == "tokens":
+        if args.detail:
+            return json.dumps(
+                llmtools.token_breakdown(args.text), ensure_ascii=False, indent=2
+            )
+        return str(llmtools.estimate_tokens(args.text))
     raise AssertionError(f"unhandled command: {args.command}")
 
 
