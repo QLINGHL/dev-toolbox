@@ -10,6 +10,11 @@ skipping anything that does not parse.
 prompt / context size before calling a model. It is a heuristic, not a
 tokenizer: real tokenizers (BPE and friends) split words differently, so
 treat the number as a planning estimate, not an exact count.
+
+``chunk_text`` splits long text for RAG preprocessing: by characters
+(exact sizes, for fixed-window splitting) or by estimated tokens
+(word-boundary chunks that fit a context budget), with an overlap so a
+sentence straddling a boundary is not lost from either side.
 """
 
 import json
@@ -153,3 +158,90 @@ def estimate_tokens(text: str) -> int:
         TypeError: if ``text`` is not a string.
     """
     return token_breakdown(text)["total"]
+
+
+def chunk_text(text: str, size: int, overlap: int = 0, by: str = "chars") -> list:
+    """Split ``text`` into chunks of at most ``size`` units, with overlap.
+
+    Args:
+        text: the text to split.
+        size: maximum chunk size, in characters (``by="chars"``) or in
+            estimated tokens (``by="tokens"``, see :func:`estimate_tokens`).
+        overlap: units shared between consecutive chunks (0 = no overlap).
+            Must be smaller than ``size``.
+        by: ``"chars"`` or ``"tokens"``.
+
+    Behaviour:
+      * ``by="chars"``: exact sliding window over characters; the last
+        chunk may be shorter than ``size``.
+      * ``by="tokens"``: chunks are built word by word (whitespace
+        separated, rejoined with single spaces) so words are never split;
+        a single word that alone exceeds ``size`` becomes its own chunk.
+        The overlap carries trailing whole words worth at most
+        ``overlap`` estimated tokens into the next chunk. Overlap never
+        re-emits a whole chunk: progress is at least one word per chunk,
+        so chunking always terminates.
+      * Empty (or whitespace-only, for ``by="tokens"``) text returns ``[]``.
+
+    Raises:
+        TypeError: if ``text`` is not a string, or ``size``/``overlap``
+            are not integers.
+        ValueError: if ``size`` < 1, ``overlap`` < 0, ``overlap`` >=
+            ``size``, or ``by`` is neither ``"chars"`` nor ``"tokens"``.
+    """
+    if not isinstance(text, str):
+        raise TypeError(f"chunk_text expects str, got {type(text).__name__}")
+    if isinstance(size, bool) or not isinstance(size, int):
+        raise TypeError(f"chunk_text size expects int, got {type(size).__name__}")
+    if isinstance(overlap, bool) or not isinstance(overlap, int):
+        raise TypeError(
+            f"chunk_text overlap expects int, got {type(overlap).__name__}"
+        )
+    if size < 1:
+        raise ValueError(f"chunk_text size must be >= 1, got {size}")
+    if overlap < 0:
+        raise ValueError(f"chunk_text overlap must be >= 0, got {overlap}")
+    if overlap >= size:
+        raise ValueError(
+            f"chunk_text overlap ({overlap}) must be smaller than size ({size})"
+        )
+    if by not in ("chars", "tokens"):
+        raise ValueError(f"chunk_text by must be 'chars' or 'tokens', got {by!r}")
+
+    if by == "chars":
+        if not text:
+            return []
+        step = size - overlap
+        return [text[i : i + size] for i in range(0, len(text), step)]
+
+    words = text.split()
+    if not words:
+        return []
+    chunks = []
+    start = 0
+    while start < len(words):
+        end = start
+        total = 0
+        while end < len(words):
+            word_tokens = estimate_tokens(words[end])
+            if total > 0 and total + word_tokens > size:
+                break
+            total += word_tokens
+            end += 1
+        chunks.append(" ".join(words[start:end]))
+        if end == len(words):
+            break
+        if overlap == 0:
+            start = end
+            continue
+        back = end
+        back_tokens = 0
+        while back > start:
+            word_tokens = estimate_tokens(words[back - 1])
+            if back_tokens + word_tokens > overlap:
+                break
+            back_tokens += word_tokens
+            back -= 1
+        # Guarantee progress: never restart at the same word.
+        start = back if back > start else start + 1
+    return chunks

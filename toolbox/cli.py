@@ -8,6 +8,8 @@ Commands:
     hash     "hello"               -> sha256 hex digest (--algo md5|sha1|sha256)
     extract_json 'Here: {"a": 1}' -> {"a": 1} (pretty-printed)
     tokens   "hello world"         -> 4 (offline estimate; --detail for breakdown)
+    chunk    "long text ..." --size 500 --overlap 50 --by tokens
+                                        -> chunks separated by a --- line (--json for a JSON list)
 """
 
 import argparse
@@ -54,6 +56,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("text")
     p.add_argument("--detail", action="store_true", help="print the full breakdown")
 
+    p = sub.add_parser(
+        "chunk",
+        help="split long text into chunks for RAG preprocessing (with overlap)",
+    )
+    p.add_argument("text")
+    p.add_argument("--size", type=int, default=500, help="max chunk size (default 500)")
+    p.add_argument("--overlap", type=int, default=0, help="overlap between chunks (default 0)")
+    p.add_argument(
+        "--by", choices=["chars", "tokens"], default="chars",
+        help="chunk unit: chars (exact) or tokens (estimated, word boundaries)",
+    )
+    p.add_argument("--json", action="store_true", help="print chunks as a JSON list")
+
     return parser
 
 
@@ -79,6 +94,13 @@ def run(argv: list[str] | None = None) -> str:
                 llmtools.token_breakdown(args.text), ensure_ascii=False, indent=2
             )
         return str(llmtools.estimate_tokens(args.text))
+    if args.command == "chunk":
+        chunks = llmtools.chunk_text(
+            args.text, args.size, overlap=args.overlap, by=args.by
+        )
+        if args.json:
+            return json.dumps(chunks, ensure_ascii=False, indent=2)
+        return "\n---\n".join(chunks)
     raise AssertionError(f"unhandled command: {args.command}")
 
 

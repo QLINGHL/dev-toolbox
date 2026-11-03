@@ -18,6 +18,8 @@ python -m toolbox hash "hello" --algo md5
 python -m toolbox extract_json 'Here: {"a": 1}'  # {"a": 1} (pretty-printed)
 python -m toolbox tokens "hello world"          # 4 (offline estimate)
 python -m toolbox tokens "hello 你好" --detail  # breakdown: CJK chars, words, symbols
+python -m toolbox chunk "long text ..." --size 500 --overlap 50 --by tokens
+# chunks separated by a --- line (--json for a JSON list)
 ```
 
 Or import the functions directly:
@@ -38,6 +40,7 @@ texttools.slugify("My First Post")   # 'my-first-post'
 | `hash` | md5 / sha1 / sha256 hex digest of a text |
 | `extract_json` | First valid JSON object/array from LLM output (handles ```json fences and surrounding prose) |
 | `tokens` | Offline token-count estimate: CJK 1 token/char, English ~4 chars/token, punctuation 1/symbol (`--detail` shows the breakdown) |
+| `chunk` | Split long text into chunks for RAG preprocessing: `--size` / `--overlap`, `--by chars` (exact) or `--by tokens` (word boundaries, never splits a word) |
 
 ## Roadmap
 
