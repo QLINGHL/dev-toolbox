@@ -15,6 +15,13 @@ treat the number as a planning estimate, not an exact count.
 (exact sizes, for fixed-window splitting) or by estimated tokens
 (word-boundary chunks that fit a context budget), with an overlap so a
 sentence straddling a boundary is not lost from either side.
+
+``cosine_similarity`` compares two vectors -- the core operation behind
+embedding search in RAG: rank candidate chunks by their cosine
+similarity to the query embedding. ``text_cosine_similarity`` is the
+same idea without embeddings: word-frequency vectors, so two texts can
+be compared offline (e.g. to check whether a retrieved chunk is a
+near-duplicate of the query, or to rank chunks by keyword overlap).
 """
 
 import json
@@ -245,3 +252,101 @@ def chunk_text(text: str, size: int, overlap: int = 0, by: str = "chars") -> lis
         # Guarantee progress: never restart at the same word.
         start = back if back > start else start + 1
     return chunks
+
+
+def cosine_similarity(a, b) -> float:
+    """Cosine similarity between two numeric vectors.
+
+    ``dot(a, b) / (|a| * |b|)`` -- 1.0 means the vectors point the same
+    way, 0.0 means they are orthogonal, -1.0 means opposite. Magnitude
+    does not matter: ``[1, 2]`` and ``[2, 4]`` score 1.0, which is why
+    embedding search ranks by cosine rather than by distance.
+
+    Args:
+        a, b: sequences of numbers (lists, tuples, ...) of equal length.
+
+    Raises:
+        TypeError: if either input is not a sequence of numbers, or an
+            element is not a real number (bool counts as non-numeric here).
+        ValueError: if the vectors are empty, have different lengths,
+            or either one is the zero vector (similarity is undefined --
+            there is no direction to compare).
+    """
+    for name, vec in (("a", a), ("b", b)):
+        if isinstance(vec, (str, bytes)) or not hasattr(vec, "__iter__"):
+            raise TypeError(
+                f"cosine_similarity {name} expects a sequence of numbers, "
+                f"got {type(vec).__name__}"
+            )
+        for element in vec:
+            if isinstance(element, bool) or not isinstance(
+                element, (int, float)
+            ):
+                raise TypeError(
+                    f"cosine_similarity {name} expects numbers, "
+                    f"got {type(element).__name__}"
+                )
+    a = list(a)
+    b = list(b)
+    if not a or not b:
+        raise ValueError("cosine_similarity expects non-empty vectors")
+    if len(a) != len(b):
+        raise ValueError(
+            f"cosine_similarity vectors must have equal length, "
+            f"got {len(a)} and {len(b)}"
+        )
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(y * y for y in b))
+    if norm_a == 0.0 or norm_b == 0.0:
+        raise ValueError(
+            "cosine_similarity is undefined for the zero vector"
+        )
+    return dot / (norm_a * norm_b)
+
+
+def _text_tokens(text: str) -> list:
+    """Tokens for the word-frequency vector: lowercased ASCII words plus
+    each CJK character as its own token (CJK has no word boundaries)."""
+    tokens = [word.lower() for word in _WORD_RE.findall(text)]
+    tokens.extend(_CJK_RE.findall(text))
+    return tokens
+
+
+def text_cosine_similarity(a: str, b: str) -> float:
+    """Cosine similarity between two texts, via word-frequency vectors.
+
+    Each text becomes a bag-of-words vector (ASCII words lowercased,
+    each CJK character its own token; punctuation and whitespace are
+    ignored), then :func:`cosine_similarity` compares the vectors. The
+    result is in [0.0, 1.0]: 1.0 for identical word multisets (order
+    does not matter), 0.0 when the texts share no word.
+
+    Use it offline to compare a query with a candidate chunk, or to
+    spot near-duplicate chunks before indexing them. For semantic
+    similarity (same meaning, different words) use real embeddings --
+    this only sees shared words.
+
+    Raises:
+        TypeError: if either input is not a string.
+        ValueError: if either text has no tokens (empty, or only
+            punctuation/whitespace) -- the zero vector has no direction.
+    """
+    if not isinstance(a, str):
+        raise TypeError(f"text_cosine_similarity expects str, got {type(a).__name__}")
+    if not isinstance(b, str):
+        raise TypeError(f"text_cosine_similarity expects str, got {type(b).__name__}")
+    freq_a: dict = {}
+    for token in _text_tokens(a):
+        freq_a[token] = freq_a.get(token, 0) + 1
+    freq_b: dict = {}
+    for token in _text_tokens(b):
+        freq_b[token] = freq_b.get(token, 0) + 1
+    if not freq_a or not freq_b:
+        raise ValueError(
+            "text_cosine_similarity expects texts with at least one word"
+        )
+    keys = set(freq_a) | set(freq_b)
+    return cosine_similarity(
+        [freq_a.get(k, 0) for k in keys], [freq_b.get(k, 0) for k in keys]
+    )

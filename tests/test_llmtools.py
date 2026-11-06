@@ -97,6 +97,122 @@ def test_cli_extract_json():
     assert json.loads(out) == {"x": True}
 
 
+def test_cosine_identical_vectors_is_one():
+    assert llmtools.cosine_similarity([1, 2, 3], [1, 2, 3]) == 1.0
+
+
+def test_cosine_scaled_vectors_is_one():
+    # Magnitude does not matter -- embedding search ranks by direction.
+    assert abs(llmtools.cosine_similarity([1, 2], [2, 4]) - 1.0) < 1e-12
+
+
+def test_cosine_orthogonal_is_zero():
+    assert llmtools.cosine_similarity([1, 0], [0, 1]) == 0.0
+
+
+def test_cosine_opposite_is_minus_one():
+    assert abs(llmtools.cosine_similarity([1, 2], [-1, -2]) - (-1.0)) < 1e-12
+
+
+def test_cosine_known_value():
+    # dot = 32, |a| = 5, |b| = sqrt(41) -> 32 / (5 * sqrt(41))
+    import math
+
+    score = llmtools.cosine_similarity([3, 4], [4, 5])
+    assert abs(score - 32 / (5 * math.sqrt(41))) < 1e-12
+
+
+def test_cosine_mismatched_lengths_raise():
+    for a, b in [([1, 2], [1]), ([1], [1, 2, 3])]:
+        try:
+            llmtools.cosine_similarity(a, b)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"expected ValueError for {a!r} vs {b!r}")
+
+
+def test_cosine_empty_or_zero_vector_raises():
+    for a, b in [([], [1]), ([1], []), ([0, 0], [1, 2]), ([1, 2], [0, 0])]:
+        try:
+            llmtools.cosine_similarity(a, b)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"expected ValueError for {a!r} vs {b!r}")
+
+
+def test_cosine_non_numeric_raises_type_error():
+    for a, b in [([1, "x"], [1, 2]), ("ab", [1, 2]), ([1, True], [1, 2]), (5, [1, 2])]:
+        try:
+            llmtools.cosine_similarity(a, b)
+        except TypeError:
+            pass
+        else:
+            raise AssertionError(f"expected TypeError for {a!r} vs {b!r}")
+
+
+def test_text_cosine_identical_is_one():
+    assert abs(llmtools.text_cosine_similarity("hello world", "world hello") - 1.0) < 1e-12
+
+
+def test_text_cosine_disjoint_is_zero():
+    assert llmtools.text_cosine_similarity("hello world", "goodbye moon") == 0.0
+
+
+def test_text_cosine_partial_overlap():
+    # "hello world" vs "hello there": dot=1, |a|=sqrt(2), |b|=sqrt(2) -> 0.5
+    assert abs(llmtools.text_cosine_similarity("hello world", "hello there") - 0.5) < 1e-12
+
+
+def test_text_cosine_case_insensitive_and_ignores_punctuation():
+    assert abs(llmtools.text_cosine_similarity("Hello, World!", "hello world") - 1.0) < 1e-12
+
+
+def test_text_cosine_repeated_words_count():
+    # "cat cat dog" vs "cat dog dog": dot=4, |a|=|b|=sqrt(5) -> 0.8
+    assert abs(llmtools.text_cosine_similarity("cat cat dog", "cat dog dog") - 0.8) < 1e-12
+
+
+def test_text_cosine_cjk_characters_are_tokens():
+    # "你好世界" vs "你好": dot=2, |a|=2, |b|=sqrt(2) -> 1/sqrt(2)
+    import math
+
+    score = llmtools.text_cosine_similarity("你好世界", "你好")
+    assert abs(score - 1 / math.sqrt(2)) < 1e-12
+
+
+def test_text_cosine_empty_or_no_words_raises():
+    for a, b in [("", "hello"), ("hello", ""), ("!!!", "hello"), ("   ", "x")]:
+        try:
+            llmtools.text_cosine_similarity(a, b)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"expected ValueError for {a!r} vs {b!r}")
+
+
+def test_text_cosine_non_string_raises_type_error():
+    try:
+        llmtools.text_cosine_similarity(["hello"], "hello")
+    except TypeError:
+        pass
+    else:
+        raise AssertionError("expected TypeError for non-str input")
+
+
+def test_cli_cosine_vectors():
+    out = cli.run(["cosine", "1 2 3", "1 2 3"])
+    assert out == "1.0000"
+    out = cli.run(["cosine", "1,0", "0,1"])
+    assert out == "0.0000"
+
+
+def test_cli_cosine_text_mode():
+    out = cli.run(["cosine", "hello world", "hello there", "--text"])
+    assert out == "0.5000"
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for test in tests:

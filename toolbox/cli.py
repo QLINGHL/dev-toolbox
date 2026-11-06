@@ -8,6 +8,8 @@ Commands:
     hash     "hello"               -> sha256 hex digest (--algo md5|sha1|sha256)
     extract_json 'Here: {"a": 1}' -> {"a": 1} (pretty-printed)
     tokens   "hello world"         -> 4 (offline estimate; --detail for breakdown)
+    cosine   "1 2 3" "4 5 6"        -> 0.9746 (cosine similarity of two vectors)
+    cosine   "hello world" "hello" --text -> 0.7071 (word-frequency similarity)
     chunk    "long text ..." --size 500 --overlap 50 --by tokens
                                         -> chunks separated by a --- line (--json for a JSON list)
 """
@@ -57,6 +59,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--detail", action="store_true", help="print the full breakdown")
 
     p = sub.add_parser(
+        "cosine",
+        help="cosine similarity of two vectors (space/comma-separated numbers), "
+        "or of two texts with --text",
+    )
+    p.add_argument("a", help='first vector, e.g. "1 2 3", or first text with --text')
+    p.add_argument("b", help='second vector, e.g. "4 5 6", or second text with --text')
+    p.add_argument(
+        "--text", action="store_true",
+        help="compare texts by word frequency instead of numeric vectors",
+    )
+
+    p = sub.add_parser(
         "chunk",
         help="split long text into chunks for RAG preprocessing (with overlap)",
     )
@@ -70,6 +84,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true", help="print chunks as a JSON list")
 
     return parser
+
+
+def _parse_vector(text: str) -> list:
+    """Parse "1 2 3" / "1,2,3" / "1, 2, 3" into a list of floats."""
+    parts = text.replace(",", " ").split()
+    if not parts:
+        raise ValueError("cosine expects a non-empty vector")
+    try:
+        return [float(part) for part in parts]
+    except ValueError:
+        raise ValueError(
+            f"cosine expects numbers, got {text!r} "
+            "(use --text to compare texts)"
+        ) from None
 
 
 def run(argv: list[str] | None = None) -> str:
@@ -94,6 +122,14 @@ def run(argv: list[str] | None = None) -> str:
                 llmtools.token_breakdown(args.text), ensure_ascii=False, indent=2
             )
         return str(llmtools.estimate_tokens(args.text))
+    if args.command == "cosine":
+        if args.text:
+            score = llmtools.text_cosine_similarity(args.a, args.b)
+        else:
+            score = llmtools.cosine_similarity(
+                _parse_vector(args.a), _parse_vector(args.b)
+            )
+        return f"{score:.4f}"
     if args.command == "chunk":
         chunks = llmtools.chunk_text(
             args.text, args.size, overlap=args.overlap, by=args.by
