@@ -12,6 +12,8 @@ Commands:
     cosine   "hello world" "hello" --text -> 0.7071 (word-frequency similarity)
     chunk    "long text ..." --size 500 --overlap 50 --by tokens
                                         -> chunks separated by a --- line (--json for a JSON list)
+    prompt   "You are a {{role}}." --var role=translator
+                                        -> You are a translator. (missing variable is an error)
 """
 
 import argparse
@@ -83,7 +85,43 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--json", action="store_true", help="print chunks as a JSON list")
 
+    p = sub.add_parser(
+        "prompt",
+        help="render a prompt template, filling {{variable}} placeholders",
+    )
+    p.add_argument("template", help='template text, e.g. "You are a {{role}}."')
+    p.add_argument(
+        "--var",
+        dest="vars",
+        action="append",
+        default=[],
+        metavar="NAME=VALUE",
+        help="value for a placeholder (repeatable); "
+        "a missing placeholder is an error",
+    )
+    p.add_argument(
+        "--list-vars",
+        action="store_true",
+        help="print the placeholders the template needs, one per line",
+    )
+
     return parser
+
+
+def _parse_vars(pairs: list) -> dict:
+    """Parse ["name=value", ...] into a dict; later values win."""
+    variables = {}
+    for pair in pairs:
+        if "=" not in pair:
+            raise ValueError(
+                f"--var expects NAME=VALUE, got {pair!r}"
+            )
+        name, value = pair.split("=", 1)
+        name = name.strip()
+        if not name.isidentifier():
+            raise ValueError(f"--var name must be an identifier, got {name!r}")
+        variables[name] = value
+    return variables
 
 
 def _parse_vector(text: str) -> list:
@@ -137,6 +175,12 @@ def run(argv: list[str] | None = None) -> str:
         if args.json:
             return json.dumps(chunks, ensure_ascii=False, indent=2)
         return "\n---\n".join(chunks)
+    if args.command == "prompt":
+        if args.list_vars:
+            return "\n".join(llmtools.list_prompt_variables(args.template))
+        return llmtools.render_prompt(
+            args.template, _parse_vars(args.vars)
+        )
     raise AssertionError(f"unhandled command: {args.command}")
 
 

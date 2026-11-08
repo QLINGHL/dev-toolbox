@@ -213,6 +213,121 @@ def test_cli_cosine_text_mode():
     assert out == "0.5000"
 
 
+def test_render_prompt_basic():
+    assert (
+        llmtools.render_prompt(
+            "You are a {{role}}. Summarise this {{language}} text.",
+            {"role": "translator", "language": "French"},
+        )
+        == "You are a translator. Summarise this French text."
+    )
+
+
+def test_render_prompt_whitespace_inside_braces():
+    assert (
+        llmtools.render_prompt("Hello {{ name }}!", {"name": "Li"})
+        == "Hello Li!"
+    )
+
+
+def test_render_prompt_repeated_placeholder():
+    assert (
+        llmtools.render_prompt("{{x}} and {{x}}", {"x": "a"}) == "a and a"
+    )
+
+
+def test_render_prompt_no_placeholders_is_unchanged():
+    assert llmtools.render_prompt("plain text", {"unused": 1}) == "plain text"
+    assert llmtools.render_prompt("plain text") == "plain text"
+    assert llmtools.render_prompt("") == ""
+
+
+def test_render_prompt_missing_variable_names_it():
+    try:
+        llmtools.render_prompt("Hi {{name}}, you are {{role}}.", {"name": "Li"})
+    except ValueError as exc:
+        assert "role" in str(exc)
+        assert "name" not in str(exc)  # supplied variables are not reported
+    else:
+        raise AssertionError("expected ValueError for missing variable")
+
+
+def test_render_prompt_lists_every_missing_variable():
+    try:
+        llmtools.render_prompt("{{a}} {{b}} {{c}}", {})
+    except ValueError as exc:
+        assert str(exc) == "render_prompt missing variable(s): a, b, c"
+    else:
+        raise AssertionError("expected ValueError for missing variables")
+
+
+def test_render_prompt_unmatched_braces_are_literal():
+    # A stray "{{" or a non-identifier placeholder is not a variable.
+    assert llmtools.render_prompt("use {{ for dicts", {}) == "use {{ for dicts"
+    assert (
+        llmtools.render_prompt("{{not-a-name}} stays", {})
+        == "{{not-a-name}} stays"
+    )
+
+
+def test_render_prompt_non_string_value_is_converted():
+    assert llmtools.render_prompt("count {{n}}", {"n": 42}) == "count 42"
+
+
+def test_render_prompt_bad_types_raise():
+    for template, variables in [
+        (42, {}),
+        ("{{x}}", ["x"]),
+        ("{{x}}", "x"),
+    ]:
+        try:
+            llmtools.render_prompt(template, variables)
+        except TypeError:
+            pass
+        else:
+            raise AssertionError(
+                f"expected TypeError for {template!r}, {variables!r}"
+            )
+
+
+def test_list_prompt_variables_order_and_dedup():
+    assert llmtools.list_prompt_variables(
+        "{{role}}: {{text}} ({{role}} again, {{text}})"
+    ) == ["role", "text"]
+    assert llmtools.list_prompt_variables("no placeholders") == []
+    assert llmtools.list_prompt_variables("{{ not-a-name }} {{ ok }}") == ["ok"]
+
+
+def test_cli_prompt_renders_and_reports_missing():
+    out = cli.run(
+        ["prompt", "You are a {{role}}.", "--var", "role=translator"]
+    )
+    assert out == "You are a translator."
+    try:
+        cli.run(["prompt", "Hi {{name}}"])
+    except ValueError as exc:
+        assert "name" in str(exc)
+    else:
+        raise AssertionError("expected ValueError for missing CLI variable")
+
+
+def test_cli_prompt_list_vars():
+    out = cli.run(
+        ["prompt", "{{role}}: {{text}} ({{role}})", "--list-vars"]
+    )
+    assert out == "role\ntext"
+
+
+def test_cli_prompt_var_must_be_name_equals_value():
+    for bad in [["prompt", "{{x}}", "--var", "no-equals"], ["prompt", "{{x}}", "--var", "1bad=v"]]:
+        try:
+            cli.run(bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"expected ValueError for {bad!r}")
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for test in tests:

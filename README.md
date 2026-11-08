@@ -22,6 +22,8 @@ python -m toolbox chunk "long text ..." --size 500 --overlap 50 --by tokens
 # chunks separated by a --- line (--json for a JSON list)
 python -m toolbox cosine "1 2 3" "4 5 6"      # 0.9746 (embedding-style vector similarity)
 python -m toolbox cosine "hello world" "hello there" --text  # 0.5000 (word-frequency similarity)
+python -m toolbox prompt "You are a {{role}}." --var role=translator  # You are a translator.
+python -m toolbox prompt "{{role}}: {{text}}" --list-vars  # role / text (one per line)
 ```
 
 Or import the functions directly:
@@ -44,6 +46,7 @@ texttools.slugify("My First Post")   # 'my-first-post'
 | `tokens` | Offline token-count estimate: CJK 1 token/char, English ~4 chars/token, punctuation 1/symbol (`--detail` shows the breakdown) |
 | `chunk` | Split long text into chunks for RAG preprocessing: `--size` / `--overlap`, `--by chars` (exact) or `--by tokens` (word boundaries, never splits a word) |
 | `cosine` | Cosine similarity of two vectors (`"1 2 3"` vs `"4 5 6"`); `--text` compares two texts by word frequency (ASCII words lowercased, each CJK char a token) |
+| `prompt` | Render a prompt template: fill `{{variable}}` placeholders with `--var name=value` (repeatable); a missing variable is an error naming every missing name; `--list-vars` prints the placeholders a template needs |
 
 ## Roadmap
 

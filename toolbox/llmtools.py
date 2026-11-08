@@ -22,6 +22,12 @@ similarity to the query embedding. ``text_cosine_similarity`` is the
 same idea without embeddings: word-frequency vectors, so two texts can
 be compared offline (e.g. to check whether a retrieved chunk is a
 near-duplicate of the query, or to rank chunks by keyword overlap).
+
+``render_prompt`` fills ``{{variable}}`` placeholders in a prompt
+template -- the step that turns a stored template into the exact text
+sent to a model. It fails loudly on a missing variable instead of
+silently sending a half-filled prompt, and
+``list_prompt_variables`` reports which variables a template needs.
 """
 
 import json
@@ -35,6 +41,10 @@ _CJK_RE = re.compile(
     r"[\u2e80-\u9fff\uac00-\ud7af\uf900-\ufaff\U00020000-\U0002ffff]"
 )
 _WORD_RE = re.compile(r"[A-Za-z0-9_]+")
+# {{name}} placeholders, with optional whitespace inside the braces.
+# Names are Python-identifier style so a template cannot smuggle in
+# attribute access or expressions -- it is plain substitution, not eval.
+_PLACEHOLDER_RE = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
 
 
 def _scan_text(text: str):
@@ -349,4 +359,74 @@ def text_cosine_similarity(a: str, b: str) -> float:
     keys = set(freq_a) | set(freq_b)
     return cosine_similarity(
         [freq_a.get(k, 0) for k in keys], [freq_b.get(k, 0) for k in keys]
+    )
+
+
+def list_prompt_variables(template: str) -> list:
+    """Return the placeholder names in ``template``, in first-appearance
+    order, deduplicated.
+
+    Only well-formed ``{{name}}`` placeholders count (names are
+    identifier-style, optional whitespace inside the braces is allowed).
+    Text that merely looks like a placeholder -- ``{{`` with no closing
+    ``}}``, or ``{{not-a-name}}`` -- is literal text and is not listed.
+
+    Raises:
+        TypeError: if ``template`` is not a string.
+    """
+    if not isinstance(template, str):
+        raise TypeError(
+            f"list_prompt_variables expects str, got {type(template).__name__}"
+        )
+    seen = []
+    for match in _PLACEHOLDER_RE.finditer(template):
+        name = match.group(1)
+        if name not in seen:
+            seen.append(name)
+    return seen
+
+
+def render_prompt(template: str, variables=None) -> str:
+    """Render a prompt template by filling ``{{variable}}`` placeholders.
+
+    Args:
+        template: the template text, e.g.
+            ``"You are a {{role}}. Summarise this {{language}} text: {{text}}"``.
+        variables: a mapping from placeholder name to value. Values are
+            converted with ``str()``; a missing key is an error, not a
+            silent empty string. ``None`` is treated as an empty mapping
+            (so a template with no placeholders renders as-is).
+
+    Behaviour:
+      * ``{{ name }}`` (whitespace inside the braces) works the same as
+        ``{{name}}``; the same placeholder may appear several times.
+      * Text that is not a well-formed placeholder -- an unmatched
+        ``{{``, or ``{{not-a-name}}`` -- is left untouched, so literal
+        braces in the prompt survive rendering.
+
+    Raises:
+        TypeError: if ``template`` is not a string, or ``variables``
+            is not a mapping.
+        ValueError: if any placeholder has no value in ``variables``;
+            the message names every missing variable, so the caller can
+            fix them all in one pass instead of one at a time.
+    """
+    if not isinstance(template, str):
+        raise TypeError(f"render_prompt expects str, got {type(template).__name__}")
+    if variables is None:
+        variables = {}
+    if not isinstance(variables, dict) and not hasattr(variables, "keys"):
+        raise TypeError(
+            f"render_prompt variables expects a mapping, "
+            f"got {type(variables).__name__}"
+        )
+    missing = [
+        name for name in list_prompt_variables(template) if name not in variables
+    ]
+    if missing:
+        raise ValueError(
+            "render_prompt missing variable(s): " + ", ".join(missing)
+        )
+    return _PLACEHOLDER_RE.sub(
+        lambda match: str(variables[match.group(1)]), template
     )
