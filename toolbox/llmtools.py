@@ -28,6 +28,13 @@ template -- the step that turns a stored template into the exact text
 sent to a model. It fails loudly on a missing variable instead of
 silently sending a half-filled prompt, and
 ``list_prompt_variables`` reports which variables a template needs.
+
+``redact`` scrubs text before it goes into a model: email addresses,
+Chinese mobile numbers, and API-key-shaped strings are replaced with
+``[EMAIL]`` / ``[PHONE]`` / ``[API_KEY]`` placeholders. It is a
+conservative scrubber, not a validator: it does not check whether a
+key is real and never touches the network. ``redact_report`` does the
+same and also returns how many of each kind were found.
 """
 
 import json
@@ -45,6 +52,36 @@ _WORD_RE = re.compile(r"[A-Za-z0-9_]+")
 # Names are Python-identifier style so a template cannot smuggle in
 # attribute access or expressions -- it is plain substitution, not eval.
 _PLACEHOLDER_RE = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
+
+# Patterns for redact(): order matters -- key=value pairs first (the
+# key name is kept, only the value is scrubbed), then known key shapes,
+# then email, then phone. Phone runs last so an email's digits or a
+# key's digits are never mistaken for a phone number.
+_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+# Chinese mobile: 11 digits starting 1[3-9], with an optional +86
+# (or bare 86) prefix and optional spaces/hyphens in 3-4-4 grouping.
+# The lookarounds keep it from firing inside a longer digit run, so
+# dates (2026-11-24), versions (1.2.3) and ordinary numbers are safe.
+_PHONE_RE = re.compile(
+    r"(?<!\d)(?:\+?86[ -]?)?1[3-9]\d[ -]?\d{4}[ -]?\d{4}(?!\d)"
+)
+# Known API-key shapes: OpenAI (sk- / sk-proj-), GitHub classic and
+# fine-grained PATs, AWS access keys, Slack tokens.
+_API_KEY_RES = [
+    re.compile(r"sk-(?:proj-)?[A-Za-z0-9_-]{16,}"),
+    re.compile(r"gh[pousr]_[A-Za-z0-9]{20,}"),
+    re.compile(r"github_pat_[A-Za-z0-9_]{20,}"),
+    re.compile(r"AKIA[0-9A-Z]{16}"),
+    re.compile(r"xox[baprs]-[A-Za-z0-9-]{10,}"),
+]
+# "api_key=..." / "secret: ..." / "token=..." -- keep the key name and
+# the separator, scrub only the value (quoted or bare, up to whitespace
+# or a , / ; delimiter).
+_KEY_VALUE_RE = re.compile(
+    r"\b(api_key|secret|token)\b(\s*[:=]\s*)"
+    r"(?:\"[^\"]*\"|'[^']*'|[^\s,;]+)",
+    re.IGNORECASE,
+)
 
 
 def _scan_text(text: str):
@@ -430,3 +467,61 @@ def render_prompt(template: str, variables=None) -> str:
     return _PLACEHOLDER_RE.sub(
         lambda match: str(variables[match.group(1)]), template
     )
+
+
+def redact_report(text: str) -> dict:
+    """Scrub sensitive-looking strings from ``text`` and report counts.
+
+    Returns ``{"text": <scrubbed text>, "counts": {"email": n,
+    "phone": n, "api_key": n}}``. Placeholders are fixed:
+    ``[EMAIL]`` / ``[PHONE]`` / ``[API_KEY]``.
+
+    What is scrubbed, in order:
+      * ``api_key`` / ``secret`` / ``token`` followed by ``:`` or ``=``
+        -- the key name and separator are kept, only the value is
+        replaced (``api_key=abc`` becomes ``api_key=[API_KEY]``);
+      * API-key-shaped strings: OpenAI ``sk-`` (including
+        ``sk-proj-``), GitHub ``ghp_``/``gho_``/``ghu_``/``ghs_``/
+        ``ghr_``/``github_pat_``, AWS ``AKIA...``, Slack ``xox[baprs]-``;
+      * email addresses (``name@host.tld``);
+      * Chinese mobile numbers: 11 digits starting ``1[3-9]``, with an
+        optional ``+86`` prefix and optional spaces/hyphens in 3-4-4
+        grouping (``13812345678``, ``+86 138 1234 5678``).
+
+    Deliberately conservative: any 11-digit ``1[3-9]``-starting run is
+    treated as a phone number, even if it is really an order number --
+    for a pre-model scrubber a false positive is cheaper than a leak.
+    Left untouched: dates (``2026-11-24``), versions (``v1.2.3``),
+    ordinary numbers, URL hostnames. Keys are never validated and
+    nothing is sent anywhere.
+
+    Raises:
+        TypeError: if ``text`` is not a string.
+    """
+    if not isinstance(text, str):
+        raise TypeError(f"redact_report expects str, got {type(text).__name__}")
+    counts = {"email": 0, "phone": 0, "api_key": 0}
+
+    def _scrub_key_value(match):
+        counts["api_key"] += 1
+        return f"{match.group(1)}{match.group(2)}[API_KEY]"
+
+    text = _KEY_VALUE_RE.sub(_scrub_key_value, text)
+    for pattern in _API_KEY_RES:
+        text, n = pattern.subn("[API_KEY]", text)
+        counts["api_key"] += n
+    text, n = _EMAIL_RE.subn("[EMAIL]", text)
+    counts["email"] += n
+    text, n = _PHONE_RE.subn("[PHONE]", text)
+    counts["phone"] += n
+    return {"text": text, "counts": counts}
+
+
+def redact(text: str) -> str:
+    """Scrub email addresses, phone numbers and API-key-shaped strings
+    from ``text`` before it goes into a model.
+
+    This is the ``"text"`` from :func:`redact_report`; see that
+    function for the exact rules. Non-string input raises TypeError.
+    """
+    return redact_report(text)["text"]

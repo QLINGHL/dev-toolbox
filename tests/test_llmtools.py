@@ -328,6 +328,95 @@ def test_cli_prompt_var_must_be_name_equals_value():
             raise AssertionError(f"expected ValueError for {bad!r}")
 
 
+def test_redact_email():
+    assert llmtools.redact("mail me at liu@example.com please") == (
+        "mail me at [EMAIL] please"
+    )
+    assert llmtools.redact("a.b_c+d@sub.domain.co.uk") == "[EMAIL]"
+
+
+def test_redact_phone_plain_and_prefixed():
+    assert llmtools.redact("call 13812345678") == "call [PHONE]"
+    assert llmtools.redact("call +86 138 1234 5678") == "call [PHONE]"
+    assert llmtools.redact("call 138-1234-5678 now") == "call [PHONE] now"
+
+
+def test_redact_api_key_shapes():
+    assert llmtools.redact("key sk-abcdefghij1234567890") == "key [API_KEY]"
+    assert llmtools.redact("key sk-proj-abcdefghij1234567890") == "key [API_KEY]"
+    assert (
+        llmtools.redact("token ghp_" + "a" * 36)
+        == "token [API_KEY]"
+    )
+    assert llmtools.redact("key AKIAIOSFODNN7EXAMPLE") == "key [API_KEY]"
+    assert llmtools.redact("token xoxb-123456789012-abcdef") == "token [API_KEY]"
+    assert (
+        llmtools.redact("pat github_pat_" + "a" * 22 + "_" + "b" * 59)
+        == "pat [API_KEY]"
+    )
+
+
+def test_redact_key_value_pairs_keep_key_name():
+    assert llmtools.redact("api_key=abc123") == "api_key=[API_KEY]"
+    assert llmtools.redact("secret: hunter2") == "secret: [API_KEY]"
+    assert llmtools.redact('token="abc123"') == 'token=[API_KEY]'
+
+
+def test_redact_mixed_text_and_report_counts():
+    report = llmtools.redact_report(
+        "hi liu@example.com, call 13812345678, key sk-abcdefghij1234567890"
+    )
+    assert report["text"] == "hi [EMAIL], call [PHONE], key [API_KEY]"
+    assert report["counts"] == {"email": 1, "phone": 1, "api_key": 1}
+    assert llmtools.redact_report("nothing sensitive here")["counts"] == {
+        "email": 0,
+        "phone": 0,
+        "api_key": 0,
+    }
+
+
+def test_redact_clean_text_unchanged():
+    text = "Summarise this RAG chunk for the report."
+    assert llmtools.redact(text) == text
+    assert llmtools.redact("") == ""
+
+
+def test_redact_order_number_dates_versions_unchanged():
+    assert llmtools.redact("订单号 20260123456") == "订单号 20260123456"
+    assert llmtools.redact("order 12345678901") == "order 12345678901"
+    assert llmtools.redact("on 2026-11-24, v1.2.3 released") == (
+        "on 2026-11-24, v1.2.3 released"
+    )
+    assert llmtools.redact("see https://example.com/docs") == (
+        "see https://example.com/docs"
+    )
+
+
+def test_redact_bad_types_raise():
+    for bad in [42, None, ["x"]]:
+        for func in (llmtools.redact, llmtools.redact_report):
+            try:
+                func(bad)
+            except TypeError:
+                pass
+            else:
+                raise AssertionError(
+                    f"expected TypeError for {func.__name__}({bad!r})"
+                )
+
+
+def test_cli_redact_and_report():
+    out = cli.run(["redact", "mail liu@example.com or call 13812345678"])
+    assert out == "mail [EMAIL] or call [PHONE]"
+    import json
+
+    report = json.loads(
+        cli.run(["redact", "key sk-abcdefghij1234567890", "--report"])
+    )
+    assert report["text"] == "key [API_KEY]"
+    assert report["counts"] == {"email": 0, "phone": 0, "api_key": 1}
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for test in tests:

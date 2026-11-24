@@ -14,6 +14,7 @@ Commands:
                                         -> chunks separated by a --- line (--json for a JSON list)
     prompt   "You are a {{role}}." --var role=translator
                                         -> You are a translator. (missing variable is an error)
+    redact   "call me at 13812345678"  -> call me at [PHONE] (--report for JSON + counts)
 """
 
 import argparse
@@ -105,6 +106,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="print the placeholders the template needs, one per line",
     )
 
+    p = sub.add_parser(
+        "redact",
+        help="scrub emails, phone numbers and API-key-shaped strings "
+        "before text goes into a model",
+    )
+    p.add_argument("text")
+    p.add_argument(
+        "--report",
+        action="store_true",
+        help="print JSON with the scrubbed text and per-kind counts",
+    )
+
     return parser
 
 
@@ -181,6 +194,12 @@ def run(argv: list[str] | None = None) -> str:
         return llmtools.render_prompt(
             args.template, _parse_vars(args.vars)
         )
+    if args.command == "redact":
+        if args.report:
+            return json.dumps(
+                llmtools.redact_report(args.text), ensure_ascii=False, indent=2
+            )
+        return llmtools.redact(args.text)
     raise AssertionError(f"unhandled command: {args.command}")
 
 

@@ -24,6 +24,8 @@ python -m toolbox cosine "1 2 3" "4 5 6"      # 0.9746 (embedding-style vector s
 python -m toolbox cosine "hello world" "hello there" --text  # 0.5000 (word-frequency similarity)
 python -m toolbox prompt "You are a {{role}}." --var role=translator  # You are a translator.
 python -m toolbox prompt "{{role}}: {{text}}" --list-vars  # role / text (one per line)
+python -m toolbox redact "mail liu@example.com or call 13812345678"  # mail [EMAIL] or call [PHONE]
+python -m toolbox redact "key sk-abcdefghij1234567890" --report  # JSON: scrubbed text + counts
 ```
 
 Or import the functions directly:
@@ -47,6 +49,7 @@ texttools.slugify("My First Post")   # 'my-first-post'
 | `chunk` | Split long text into chunks for RAG preprocessing: `--size` / `--overlap`, `--by chars` (exact) or `--by tokens` (word boundaries, never splits a word) |
 | `cosine` | Cosine similarity of two vectors (`"1 2 3"` vs `"4 5 6"`); `--text` compares two texts by word frequency (ASCII words lowercased, each CJK char a token) |
 | `prompt` | Render a prompt template: fill `{{variable}}` placeholders with `--var name=value` (repeatable); a missing variable is an error naming every missing name; `--list-vars` prints the placeholders a template needs |
+| `redact` | Scrub a text before it goes into a model: emails → `[EMAIL]`, Chinese mobiles (11 digits, optional `+86`, 3-4-4 spacing) → `[PHONE]`, API-key shapes (`sk-`/`sk-proj-`, `ghp_`/`github_pat_`, `AKIA...`, `xox[baprs]-`, `api_key=`/`secret:`/`token=` values) → `[API_KEY]`; `--report` prints JSON with the scrubbed text and per-kind counts. Conservative: any 11-digit `1[3-9]` run counts as a phone; dates, versions and plain numbers are left alone |
 
 ## Roadmap
 
